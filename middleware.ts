@@ -3,13 +3,6 @@ import type { NextRequest } from "next/server"
 import { createMiddlewareClient } from "@supabase/auth-helpers-nextjs"
 
 export async function middleware(request: NextRequest) {
-  // Only run on dashboard routes
-  if (!request.nextUrl.pathname.startsWith("/dashboard")) {
-    return NextResponse.next()
-  }
-
-  console.log(`Middleware - Processing request for: ${request.nextUrl.pathname}`)
-
   // Create a response object
   const res = NextResponse.next()
 
@@ -35,8 +28,11 @@ export async function middleware(request: NextRequest) {
       userId: session?.user?.id || null,
     })
 
-    // If no session and trying to access dashboard, redirect to sign in
-    if (!session) {
+    // Check if the path is a protected route
+    const isProtectedRoute = request.nextUrl.pathname.startsWith("/dashboard")
+
+    // If no session and trying to access protected route, redirect to sign in
+    if (isProtectedRoute && !session) {
       console.log("Middleware - Redirecting to sign in: No valid session")
 
       // Store the original URL to redirect back after sign-in
@@ -44,6 +40,17 @@ export async function middleware(request: NextRequest) {
       redirectUrl.searchParams.set("redirect", request.nextUrl.pathname)
 
       return NextResponse.redirect(redirectUrl)
+    }
+
+    // If there is a session but accessing auth routes, redirect to dashboard
+    const isAuthRoute =
+      request.nextUrl.pathname.startsWith("/signin") ||
+      request.nextUrl.pathname.startsWith("/signup") ||
+      request.nextUrl.pathname === "/"
+
+    if (isAuthRoute && session) {
+      console.log("Middleware - Redirecting to dashboard: User already authenticated")
+      return NextResponse.redirect(new URL("/dashboard", request.url))
     }
 
     // Add session user to response headers for client-side access
@@ -61,7 +68,7 @@ export async function middleware(request: NextRequest) {
   }
 }
 
-// Only run middleware on dashboard routes
+// Run middleware on all routes
 export const config = {
-  matcher: ["/dashboard/:path*"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.png$).*)"],
 }

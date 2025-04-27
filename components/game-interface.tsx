@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { OreDisplay } from "@/components/ore-display"
 import { StatsDisplay } from "@/components/stats-display"
@@ -15,12 +15,14 @@ import { WorkersPanel } from "@/components/workers-panel"
 import { useGameContext } from "@/components/game-provider"
 import { Toaster } from "@/components/ui/toaster"
 import { useToast } from "@/hooks/use-toast"
-import { LogOut, Loader2, Pickaxe } from "lucide-react"
-import { createClient } from "@supabase/supabase-js"
+import { LogOut, Loader2, Pickaxe, Info } from "lucide-react"
+import { createBrowserClient } from "@/lib/supabase"
 import { useRouter } from "next/navigation"
 import { Progress } from "@/components/ui/progress"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { Badge } from "@/components/ui/badge"
 
 // Default ore types
 const defaultOreTypes = {
@@ -45,17 +47,11 @@ export default function GameInterface() {
   const [isSaving, setIsSaving] = useState(false)
   const [miningProgress, setMiningProgress] = useState(0)
   const [isMining, setIsMining] = useState(false)
+  const [clicksToFill, setClicksToFill] = useState(10) // Default clicks needed
+  const [progressPerClick, setProgressPerClick] = useState(10) // Default progress per click
   const router = useRouter()
-  const [supabase] = useState(() => {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    return createClient(supabaseUrl, supabaseKey, {
-      auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-      },
-    })
-  })
+  const supabase = createBrowserClient()
+  const progressRef = useRef(miningProgress)
 
   const handleSignOut = async () => {
     await supabase.auth.signOut()
@@ -169,6 +165,175 @@ export default function GameInterface() {
       setIsSaving(false)
     }
   }
+
+  // Function to complete mining when progress reaches 100%
+  const completeMining = useCallback(
+    async (pickaxeLevel, oreQuality) => {
+      try {
+        // Determine which ore to mine based on current location
+        const currentLocation = gameState?.currentLocation || "surfaceMine"
+        const locationData = {
+          surfaceMine: {
+            oreDistribution: { stone: 70, copper: 25, iron: 5 },
+            specialResources: {},
+          },
+          // Add other locations as needed
+        }[currentLocation] || { oreDistribution: { stone: 100 }, specialResources: {} }
+
+        // Determine which ore was mined
+        const rand = Math.random() * 100
+        let cumulativeChance = 0
+        let minedOre = "stone" // Default to stone
+
+        for (const [ore, chance] of Object.entries(locationData.oreDistribution)) {
+          cumulativeChance += chance
+          if (rand <= cumulativeChance) {
+            minedOre = ore
+            break
+          }
+        }
+
+        // Calculate amount based on upgrades
+        const amount = Math.max(1, Math.floor(Math.random() * 2) + 1) * oreQuality * pickaxeLevel
+
+        // Get the latest state from the database
+        const { data: latestData } = await supabase
+          .from("player_game_state")
+          .select("ores, stats")
+          .eq("user_id", user?.id)
+          .single()
+
+        // Use the latest database state as a base if available
+        const baseOres = latestData?.ores || gameState?.ores || {}
+        const baseStats = latestData?.stats || gameState?.stats || { totalOresMined: 0, totalClicks: 0, playTime: 0 }
+
+        // Update ores in game state
+        const updatedOres = { ...baseOres }
+        updatedOres[minedOre] = (updatedOres[minedOre] || 0) + amount
+
+        // Update stats
+        const updatedStats = { ...baseStats }
+        updatedStats.totalOresMined = (updatedStats.totalOresMined || 0) + amount
+
+        // Update game state
+        updateGameState({
+          ores: updatedOres,
+          stats: updatedStats,
+        })
+
+        // Save to database - only save completed mining state (0 or 100)
+        await saveToDatabase(false)
+
+        // Show toast notification
+        toast({
+          title: "Ore Mined!",
+          description: `You mined ${amount} ${defaultOreTypes[minedOre]?.name || minedOre}.`,
+        })
+
+        // Use a more reliable way to reset progress with a slightly longer delay
+        setTimeout(() => {
+          setMiningProgress(0)
+          setIsMining(false)
+        }, 600) // Slightly longer than the transition duration
+      } catch (err) {
+        console.error("Error completing mining:", err)
+        toast({
+          title: "Error",
+          description: "Failed to complete mining. Please try again.",
+          variant: "destructive",
+        })
+        setIsMining(false)
+        setMiningProgress(0) // Reset on error too
+      }
+    },
+    [gameState, user, supabase, updateGameState, toast, saveToDatabase],
+  )
+
+  // Calculate mining stats based on player upgrades
+  useEffect(() => {
+    if (!gameState) return
+
+    // Get upgrade levels
+    const pickaxeLevel = gameState.upgrades?.pickaxeLevel || 1
+    const miningSpeed = gameState.upgrades?.miningSpeed || 1
+    const oreQuality = gameState.upgrades?.oreQuality || 1
+
+    // Calculate progress per click based on upgrades
+    // Base progress is 10%, modified by mining speed
+    const baseProgressPerClick = 10
+    const speedMultiplier = 1 + (miningSpeed - 1) * 0.2 // Each level of mining speed adds 20% to speed
+    const calculatedProgressPerClick = Math.min(50, Math.round(baseProgressPerClick * speedMultiplier))
+
+    // Calculate clicks needed to fill the bar
+    const calculatedClicksToFill = Math.max(2, Math.ceil(100 / calculatedProgressPerClick))
+
+    setProgressPerClick(calculatedProgressPerClick)
+    setClicksToFill(calculatedClicksToFill)
+  }, [gameState?.upgrades?.pickaxeLevel, gameState?.upgrades?.miningSpeed, gameState])
+
+  // Handle mining ore with progress bar - Fixed version
+  const handleMineOre = useCallback(() => {
+    if (!gameState || isMining) return
+
+    try {
+      // Get upgrade levels
+      const pickaxeLevel = gameState.upgrades?.pickaxeLevel || 1
+      const miningSpeed = gameState.upgrades?.miningSpeed || 1
+      const oreQuality = gameState.upgrades?.oreQuality || 1
+
+      // Use functional state update with the ref value
+      setMiningProgress((prevProgress) => {
+        const newProgress = Math.min(100, prevProgress + progressPerClick)
+        progressRef.current = newProgress
+
+        // Debug logging
+        console.log("Mining click:", {
+          currentProgress: prevProgress,
+          progressPerClick,
+          newProgress,
+          pickaxeLevel,
+          miningSpeed,
+        })
+
+        // Check if the progress bar is filled
+        if (newProgress >= 100) {
+          // Set mining state to true to prevent additional clicks during completion
+          setIsMining(true)
+          // Use requestAnimationFrame instead of setTimeout for smoother transitions
+          requestAnimationFrame(() => {
+            completeMining(pickaxeLevel, oreQuality)
+          })
+        } else {
+          // Save progress to database after each click if not completing
+          // Use setTimeout to avoid blocking the UI
+          setTimeout(() => {
+            updateGameState({
+              miningProgress: newProgress,
+            })
+            saveToDatabase(false)
+          }, 0)
+        }
+
+        return newProgress
+      })
+
+      // Update stats for the click
+      const updatedStats = { ...gameState.stats }
+      updatedStats.totalClicks = (updatedStats.totalClicks || 0) + 1
+
+      // Update game state with the click stats
+      updateGameState({
+        stats: updatedStats,
+      })
+    } catch (err) {
+      console.error("Mining error:", err)
+      toast({
+        title: "Error",
+        description: "Failed to mine ore. Please try again.",
+        variant: "destructive",
+      })
+    }
+  }, [gameState, progressPerClick, isMining, updateGameState, toast, completeMining, saveToDatabase])
 
   // Handle selling a specific type of ore
   const handleSellOre = async (oreType) => {
@@ -325,108 +490,99 @@ export default function GameInterface() {
     }
   }
 
-  // Handle mining ore with progress bar
-  const handleMineOre = async () => {
-    if (!gameState || isSaving || isMining) return
-
-    setIsMining(true)
+  // Handle upgrade purchase
+  const handleUpgradePurchase = async (upgradeType) => {
+    if (!gameState || isSaving) return
 
     try {
-      // Calculate mining speed based on upgrades
-      const pickaxePower = gameState.upgrades?.pickaxeLevel || 1
-      const miningSpeed = gameState.upgrades?.miningSpeed || 1
-      const progressIncrement = 5 * (miningSpeed * 0.2 + 0.8)
+      // Calculate cost based on current level
+      const currentLevel = gameState.upgrades?.[upgradeType] || 1
+      const cost = calculateUpgradeCost(upgradeType, currentLevel)
 
-      // Start the mining progress animation
-      let progress = miningProgress
-      const miningInterval = setInterval(() => {
-        progress += progressIncrement
-        if (progress >= 100) {
-          progress = 100
-          clearInterval(miningInterval)
-          completeMining()
-        }
-        setMiningProgress(progress)
-      }, 100)
-
-      // Function to complete mining when progress reaches 100%
-      const completeMining = async () => {
-        // Determine which ore to mine based on current location
-        const currentLocation = gameState.currentLocation || "surfaceMine"
-        const locationData = {
-          surfaceMine: {
-            oreDistribution: { stone: 70, copper: 25, iron: 5 },
-            specialResources: {},
-          },
-          // Add other locations as needed
-        }[currentLocation] || { oreDistribution: { stone: 100 }, specialResources: {} }
-
-        // Determine which ore was mined
-        const rand = Math.random() * 100
-        let cumulativeChance = 0
-        let minedOre = "stone" // Default to stone
-
-        for (const [ore, chance] of Object.entries(locationData.oreDistribution)) {
-          cumulativeChance += chance
-          if (rand <= cumulativeChance) {
-            minedOre = ore
-            break
-          }
-        }
-
-        // Calculate amount based on upgrades
-        const oreQuality = gameState.upgrades?.oreQuality || 1
-        const amount = Math.max(1, Math.floor(Math.random() * 2) + 1) * oreQuality * pickaxePower
-
-        // Get the latest state from the database
-        const { data: latestData } = await supabase
-          .from("player_game_state")
-          .select("ores, stats")
-          .eq("user_id", user.id)
-          .single()
-
-        // Use the latest database state as a base if available
-        const baseOres = latestData?.ores || gameState.ores
-        const baseStats = latestData?.stats || gameState.stats
-
-        // Update ores in game state
-        const updatedOres = { ...baseOres }
-        updatedOres[minedOre] = (updatedOres[minedOre] || 0) + amount
-
-        // Update stats
-        const updatedStats = { ...baseStats }
-        updatedStats.totalOresMined = (updatedStats.totalOresMined || 0) + amount
-        updatedStats.totalClicks = (updatedStats.totalClicks || 0) + 1
-
-        // Update game state
-        updateGameState({
-          ores: updatedOres,
-          stats: updatedStats,
-        })
-
-        // Save to database
-        await saveToDatabase(false)
-
-        // Show toast notification
+      // Check if player has enough coins
+      if (gameState.coins < cost) {
         toast({
-          title: "Ore Mined!",
-          description: `You mined ${amount} ${minedOre.charAt(0).toUpperCase() + minedOre.slice(1)}.`,
+          title: "Not Enough Coins",
+          description: `You need ${cost} coins to purchase this upgrade.`,
+          variant: "destructive",
         })
+        return
+      }
 
-        // Reset mining progress after a short delay
-        setTimeout(() => {
-          setMiningProgress(0)
-          setIsMining(false)
-        }, 500)
+      // Show processing toast
+      const processingToastId = toast({
+        title: "Processing Upgrade...",
+        description: (
+          <div className="flex items-center">
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            <span>Upgrading your mining capabilities...</span>
+          </div>
+        ),
+        duration: 10000,
+      }).id
+
+      // Update upgrades and coins
+      const updatedUpgrades = { ...gameState.upgrades } || {}
+      updatedUpgrades[upgradeType] = currentLevel + 1
+
+      // Update game state
+      updateGameState({
+        upgrades: updatedUpgrades,
+        coins: gameState.coins - cost,
+      })
+
+      // Save to database
+      const { success } = await saveToDatabase(false)
+
+      // Dismiss the processing toast
+      dismiss(processingToastId)
+
+      if (success) {
+        toast({
+          title: "Upgrade Successful",
+          description: `Your ${getUpgradeName(upgradeType)} has been upgraded to level ${currentLevel + 1}!`,
+        })
+      } else {
+        toast({
+          title: "Upgrade Error",
+          description: "Your upgrade could not be completed. Please try again.",
+          variant: "destructive",
+        })
       }
     } catch (err) {
       toast({
         title: "Error",
-        description: "Failed to mine ore. Please try again.",
+        description: "Failed to purchase upgrade. Please try again.",
         variant: "destructive",
       })
-      setIsMining(false)
     }
+  }
+
+  // Calculate upgrade cost based on type and current level
+  const calculateUpgradeCost = (upgradeType, currentLevel) => {
+    const baseCosts = {
+      pickaxeLevel: 100,
+      miningSpeed: 150,
+      oreQuality: 200,
+      autoMiner: 500,
+    }
+
+    const baseMultiplier = 1.5
+    const baseCost = baseCosts[upgradeType] || 100
+
+    return Math.floor(baseCost * Math.pow(baseMultiplier, currentLevel - 1))
+  }
+
+  // Get upgrade name for display
+  const getUpgradeName = (upgradeType) => {
+    const names = {
+      pickaxeLevel: "Pickaxe Level",
+      miningSpeed: "Mining Speed",
+      oreQuality: "Ore Quality",
+      autoMiner: "Auto Miner",
+    }
+
+    return names[upgradeType] || upgradeType
   }
 
   // Handle equipment purchase
@@ -522,10 +678,17 @@ export default function GameInterface() {
 
   // Load mining progress from game state on initial load
   useEffect(() => {
-    if (gameState?.miningProgress !== undefined) {
+    if (gameState?.miningProgress !== undefined && !isMining) {
+      console.log("Loading mining progress from gameState:", gameState.miningProgress)
       setMiningProgress(gameState.miningProgress)
+      progressRef.current = gameState.miningProgress
     }
-  }, [gameState])
+  }, [gameState?.miningProgress, isMining])
+
+  // Update the ref whenever miningProgress changes
+  useEffect(() => {
+    progressRef.current = miningProgress
+  }, [miningProgress])
 
   return (
     <div className="container mx-auto p-4">
@@ -573,13 +736,51 @@ export default function GameInterface() {
                   <Pickaxe className="h-6 w-6" />
                   Mining
                 </CardTitle>
+                <CardDescription className="text-slate-200">
+                  Click to mine ore and fill the progress bar
+                </CardDescription>
               </CardHeader>
               <CardContent className="pt-6 space-y-6">
                 <div className="text-center mb-4">
-                  <p className="text-lg mb-2">Click to mine ore or let your workers do it automatically!</p>
-                  <p className="text-sm text-muted-foreground">
-                    Mining power: {safeGameState.upgrades?.pickaxeLevel || 1}
-                  </p>
+                  <div className="flex items-center justify-center gap-2 mb-2">
+                    <p className="text-lg">Mining Stats</p>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-6 w-6 rounded-full p-0">
+                            <Info className="h-4 w-4" />
+                            <span className="sr-only">Mining info</span>
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>Progress per click is determined by your mining speed.</p>
+                          <p>Ore amount is determined by pickaxe level and ore quality.</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4 mb-4">
+                    <div className="bg-slate-100 p-3 rounded-lg">
+                      <p className="text-sm text-slate-500">Progress Per Click</p>
+                      <p className="text-xl font-bold">{progressPerClick}%</p>
+                    </div>
+                    <div className="bg-slate-100 p-3 rounded-lg">
+                      <p className="text-sm text-slate-500">Clicks To Mine</p>
+                      <p className="text-xl font-bold">{clicksToFill}</p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 justify-center mb-2">
+                    <Badge variant="secondary" className="flex items-center gap-1">
+                      <Pickaxe className="h-3 w-3" />
+                      Pickaxe Lv.{safeGameState.upgrades?.pickaxeLevel || 1}
+                    </Badge>
+                    <Badge variant="secondary">
+                      Mining Speed: {((safeGameState.upgrades?.miningSpeed || 1) - 1) * 20 + 100}%
+                    </Badge>
+                    <Badge variant="secondary">Ore Quality: x{safeGameState.upgrades?.oreQuality || 1}</Badge>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
@@ -587,7 +788,11 @@ export default function GameInterface() {
                     <span>Mining Progress</span>
                     <span>{Math.round(miningProgress)}%</span>
                   </div>
-                  <Progress value={miningProgress} className="h-4 bg-slate-200" />
+                  <Progress
+                    value={miningProgress}
+                    className="h-4 bg-slate-200"
+                    indicatorClassName={`bg-gradient-to-r from-amber-500 to-yellow-600 transition-transform duration-150`}
+                  />
                 </div>
 
                 <Button
@@ -634,6 +839,18 @@ export default function GameInterface() {
                       <p className="text-2xl font-bold">{safeGameState.coins || 0}</p>
                     </div>
                   </div>
+
+                  <div className="bg-slate-100 p-4 rounded-lg">
+                    <p className="text-sm text-slate-500 mb-2">Mining Efficiency</p>
+                    <div className="flex justify-between items-center">
+                      <span>Ores per click:</span>
+                      <span className="font-bold">
+                        {safeGameState.stats?.totalClicks > 0
+                          ? (safeGameState.stats.totalOresMined / safeGameState.stats.totalClicks).toFixed(2)
+                          : "0.00"}
+                      </span>
+                    </div>
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -644,8 +861,8 @@ export default function GameInterface() {
           <UpgradeShop
             upgrades={safeGameState.upgrades}
             coins={safeGameState.coins}
-            onPurchase={() => {}}
-            calculateCost={(upgradeType, currentLevel) => 100 * Math.pow(1.5, currentLevel)}
+            onPurchase={handleUpgradePurchase}
+            calculateCost={calculateUpgradeCost}
           />
         </TabsContent>
 

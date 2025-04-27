@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter }
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import Link from "next/link"
 import { Loader2, AlertCircle } from "lucide-react"
-import { isAuthenticated, signIn } from "@/lib/auth-utils"
+import { createBrowserClient } from "@/lib/supabase"
 
 export default function SignInPage() {
   const [email, setEmail] = useState("")
@@ -21,13 +21,16 @@ export default function SignInPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const redirectPath = searchParams.get("redirect") || "/dashboard"
+  const supabase = createBrowserClient()
 
   // Check if user is already authenticated
   useEffect(() => {
     async function checkAuth() {
       try {
-        const authenticated = await isAuthenticated()
-        if (authenticated) {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession()
+        if (session) {
           console.log("User is already authenticated, redirecting to:", redirectPath)
           router.push(redirectPath)
         }
@@ -39,7 +42,7 @@ export default function SignInPage() {
     }
 
     checkAuth()
-  }, [router, redirectPath])
+  }, [router, redirectPath, supabase])
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -61,17 +64,26 @@ export default function SignInPage() {
 
     try {
       console.log("Starting sign-in process...")
-      const { success, error: signInError, userId } = await signIn(email, password)
+      const { data, error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
 
-      if (!success) {
+      if (signInError) {
         console.error("Sign-in failed:", signInError)
-        setError(signInError || "Authentication failed. Please check your credentials and try again.")
+        setError(signInError.message || "Authentication failed. Please check your credentials and try again.")
+        setIsLoading(false)
+        return
+      }
+
+      if (!data.session || !data.user) {
+        setError("Authentication successful but session data is missing")
         setIsLoading(false)
         return
       }
 
       // Successful sign-in
-      console.log("Sign-in successful, user ID:", userId)
+      console.log("Sign-in successful, user ID:", data.user.id)
       console.log("Redirecting to:", redirectPath)
 
       // Force a hard navigation to ensure the session is picked up

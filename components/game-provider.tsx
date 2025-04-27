@@ -1,7 +1,7 @@
 "use client"
 
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react"
-import { createClient } from "@supabase/supabase-js"
+import { createBrowserClient } from "@/lib/supabase"
 
 // Define types for our game state
 type GameState = {
@@ -61,16 +61,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
   const [user, setUser] = useState<{ id: string; email: string } | null>(null)
-  const [supabase] = useState(() => {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    return createClient(supabaseUrl, supabaseKey, {
-      auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-      },
-    })
-  })
+  const supabase = createBrowserClient()
 
   // Function to update game state
   const updateGameState = (updates: Partial<GameState>) => {
