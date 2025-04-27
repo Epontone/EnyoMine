@@ -1,0 +1,110 @@
+export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
+
+export interface Database {
+  public: {
+    Tables: {
+      player_game_state: {
+        Row: {
+          active_boosts: Json[] | null
+          active_expeditions: Json | null
+          coins: number | null
+          completed_achievements: string[] | null
+          completed_research: string[] | null
+          created_at: string | null
+          crafted_items: Json | null
+          current_location: string | null
+          energy: number | null
+          energy_regen_rate: number | null
+          equipment: Json | null
+          id: number
+          last_energy_regen: string | null
+          max_energy: number | null
+          mining_progress: number | null
+          ores: Json | null
+          pending_prestige_multiplier: number | null
+          prestige_multiplier: number | null
+          special_resources: Json | null
+          stats: Json | null
+          unlocked_expeditions: string[] | null
+          unlocked_locations: string[] | null
+          unlocked_recipes: string[] | null
+          updated_at: string | null
+          upgrades: Json | null
+          user_id: string | null
+          workers: Json | null
+        }
+        Insert: {
+          active_boosts?: Json[] | null
+          active_expeditions?: Json | null
+          coins?: number | null
+          completed_achievements?: string[] | null
+          completed_research?: string[] | null
+          created_at?: string | null
+          crafted_items?: Json | null
+          current_location?: string | null
+          energy?: number | null
+          energy_regen_rate?: number | null
+          equipment?: Json | null
+          id?: number
+          last_energy_regen?: string | null
+          max_energy?: number | null
+          mining_progress?: number | null
+          ores?: Json | null
+          pending_prestige_multiplier?: number | null
+          prestige_multiplier?: number | null
+          special_resources?: Json | null
+          stats?: Json | null
+          unlocked_expeditions?: string[] | null
+          unlocked_locations?: string[] | null
+          unlocked_recipes?: string[] | null
+          updated_at?: string | null
+          upgrades?: Json | null
+          user_id?: string | null
+          workers?: Json | null
+        }
+        Update: {
+          active_boosts?: Json[] | null
+          active_expeditions?: Json | null
+          coins?: number | null
+          completed_achievements?: string[] | null
+          completed_research?: string[] | null
+          created_at?: string | null
+          crafted_items?: Json | null
+          current_location?: string | null
+          energy?: number | null
+          energy_regen_rate?: number | null
+          equipment?: Json | null
+          id?: number
+          last_energy_regen?: string | null
+          max_energy?: number | null
+          mining_progress?: number | null
+          ores?: Json | null
+          pending_prestige_multiplier?: number | null
+          prestige_multiplier?: number | null
+          special_resources?: Json | null
+          stats?: Json | null
+          unlocked_expeditions?: string[] | null
+          unlocked_locations?: string[] | null
+          unlocked_recipes?: string[] | null
+          updated_at?: string | null
+          upgrades?: Json | null
+          user_id?: string | null
+          workers?: Json | null
+        }
+        Relationships: []
+      }
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      [_ in never]: never
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
+  }
+}
